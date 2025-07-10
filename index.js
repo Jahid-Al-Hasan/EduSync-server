@@ -40,6 +40,7 @@ async function run() {
     // databases
     const db = client.db("edusyncDB");
     const usersCollection = db.collection("users");
+    const sessionCollections = db.collection("study-sessions");
 
     // custom middlewares
     const verifyFirebaseToken = async (req, res, next) => {
@@ -82,8 +83,6 @@ async function run() {
     app.post("/api/registerUser", verifyFirebaseToken, async (req, res) => {
       try {
         const { email, role } = req.body;
-
-        console.log(req.body);
 
         // ✅ Basic validation
         if (!email || !role) {
@@ -170,6 +169,21 @@ async function run() {
     //     res.status(500).json({ message: "Internal server error" });
     //   }
     // });
+
+    // Get all approved sessions
+    app.get("/api/study-sessions/approved", async (req, res) => {
+      try {
+        const sessions = await sessionCollections
+          .find({ status: "approved" })
+          .toArray();
+        if (!sessions) {
+          return res.status(404).send({ message: "No sessions found" });
+        }
+        res.status(200).send(sessions);
+      } catch (error) {
+        res.status(500).json({ message: "Server error" });
+      }
+    });
 
     // await client.db("admin").command({ ping: 1 });
     // console.log("connected to mongodb");
