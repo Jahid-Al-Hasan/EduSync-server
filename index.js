@@ -81,13 +81,16 @@ async function run() {
     // create user
     app.post("/api/registerUser", verifyFirebaseToken, async (req, res) => {
       try {
-        const { email, role, lastSignIn } = req.body;
+        const { email, role } = req.body;
+
+        console.log(req.body);
 
         // ✅ Basic validation
-        if (!email || !role || !lastSignIn) {
+        if (!email || !role) {
           return res.status(400).json({ message: "Missing required fields" });
         }
 
+        // verify user is registered on firebase or not
         if (req.body.email !== req.user.email) {
           return res
             .status(403)
@@ -109,7 +112,6 @@ async function run() {
           email,
           role,
           CreatedAt: new Date().toISOString(),
-          lastSignIn,
         };
         const result = await usersCollection.insertOne(newUser);
         if (!result.insertedId) {
@@ -121,25 +123,53 @@ async function run() {
       }
     });
 
-    // GET /api/userRole?email=user@example.com
-    app.get("/api/userRole", async (req, res) => {
+    // find user by email
+    app.get("/api/user", verifyFirebaseToken, async (req, res) => {
       try {
-        const email = req.query.email;
+        const email = req.user?.email;
+
+        // ✅ Validation
         if (!email) {
           return res.status(400).json({ message: "Email is required" });
         }
 
         const user = await usersCollection.findOne({ email });
-        if (!user) {
-          return res.status(404).json({ message: "User not found" });
+
+        if (user) {
+          return res.status(200).json({
+            exists: true,
+            role: user.role || "unknown",
+          });
         }
 
-        res.status(200).json({ role: user.role });
+        return res.status(200).json({
+          exists: false,
+        });
       } catch (error) {
-        console.error("Failed to fetch role:", error.message);
-        res.status(500).json({ message: "Internal server error" });
+        console.error("Failed to fetch user:", error.message);
+        return res.status(500).json({ message: "Internal server error" });
       }
     });
+
+    // GET /api/userRole?email=user@example.com
+    // app.get("/api/userRole", verifyFirebaseToken, async (req, res) => {
+    //   try {
+    //     const email = req.query.email;
+    //     if (!email) {
+    //       return res.status(400).json({ message: "Email is required" });
+    //     }
+
+    //     const user = await usersCollection.findOne({ email });
+    //     if (!user) {
+    //       return res.status(404).json({ message: "User not found" });
+    //     }
+
+    //     res.status(200).json({ role: user.role });
+    //   } catch (error) {
+    //     console.error("Failed to fetch role:", error.message);
+    //     res.status(500).json({ message: "Internal server error" });
+    //   }
+    // });
 
     // await client.db("admin").command({ ping: 1 });
     // console.log("connected to mongodb");
