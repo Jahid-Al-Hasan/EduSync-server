@@ -4,6 +4,7 @@ require("dotenv").config();
 const port = process.env.PORT || 3001;
 const cors = require("cors");
 const { MongoClient, ServerApiVersion } = require("mongodb");
+const { ObjectId } = require("mongodb");
 const admin = require("firebase-admin");
 // const serviceAccount = require("./firebaseServiceAccountKey.json");
 
@@ -41,6 +42,7 @@ async function run() {
     const db = client.db("edusyncDB");
     const usersCollection = db.collection("users");
     const sessionCollections = db.collection("study-sessions");
+    const reviewsCollection = db.collection("reviews");
 
     // custom middlewares
     const verifyFirebaseToken = async (req, res, next) => {
@@ -61,6 +63,7 @@ async function run() {
 
         // 3. Attach decoded user to the request
         req.user = decodedUser;
+        // console.log(req, user);
 
         // 4. Proceed to next middleware or route
         next();
@@ -69,6 +72,36 @@ async function run() {
         return res
           .status(403)
           .json({ message: "Forbidden - invalid or expired token" });
+      }
+    };
+    // verify student
+    // Middleware to verify if user is a student
+    const verifyStudent = async (req, res, next) => {
+      try {
+        // First verify Firebase token (if not already done)
+        if (!req.user) {
+          return res.status(401).json({ message: "Authentication required" });
+        }
+
+        const userEmail = req.user.email;
+
+        // Check user role in database
+        const user = await usersCollection.findOne({ email: userEmail });
+
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        if (user.role !== "student") {
+          return res.status(403).json({
+            message: "Access denied - Student privileges required",
+          });
+        }
+
+        next();
+      } catch (error) {
+        console.error("Student verification error:", error);
+        res.status(500).json({ message: "Internal server error" });
       }
     };
 
@@ -182,6 +215,165 @@ async function run() {
         res.status(200).send(sessions);
       } catch (error) {
         res.status(500).json({ message: "Server error" });
+      }
+    });
+
+    // POST reviews
+    app.post(
+      "/api/reviews",
+      verifyFirebaseToken,
+      verifyStudent,
+      async (req, res) => {
+        try {
+          const { sessionId, rating, comment, userName } = req.body;
+          const userEmail = req.user.email;
+
+          // Validate input
+          if (!ObjectId.isValid(sessionId)) {
+            return res
+              .status(400)
+              .json({ message: "Invalid session ID format" });
+          }
+
+          if (!rating || isNaN(rating) || rating < 1 || rating > 5) {
+            return res
+              .status(400)
+              .json({ message: "Rating must be between 1-5" });
+          }
+
+          // Check if session exists
+          const session = await sessionCollections.findOne({
+            _id: new ObjectId(sessionId),
+            status: "approved", // Only allow reviews for approved sessions
+          });
+
+          if (!session) {
+            return res
+              .status(404)
+              .json({ message: "Session not found or not approved" });
+          }
+
+          // Check if user already reviewed this session
+          const existingReview = await reviewsCollection.findOne({
+            sessionId,
+            studentEmail: userEmail,
+          });
+
+          if (existingReview) {
+            return res
+              .status(400)
+              .json({ message: "You've already reviewed this session" });
+          }
+
+          // Create new review
+          const newReview = {
+            sessionId,
+            studentEmail: userEmail,
+            studentName: userName || userEmail.split("@")[0], // Fallback to email prefix if no name
+            rating: parseInt(rating),
+            comment: comment || "",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          };
+
+          // Insert review
+          const result = await reviewsCollection.insertOne(newReview);
+
+          // Update session's average rating (optional enhancement)
+          await updateSessionAverageRating(sessionId);
+
+          res.status(201).json({
+            message: "Review submitted successfully",
+            reviewId: result.insertedId,
+          });
+        } catch (error) {
+          console.error("Review submission error:", error);
+          res.status(500).json({ message: "Failed to submit review" });
+        }
+      }
+    );
+
+    // Helper function to update session's average rating
+    // async function updateSessionAverageRating(sessionId) {
+    //   try {
+    //     const reviews = await db
+    //       .collection("reviews")
+    //       .find({ sessionId })
+    //       .toArray();
+
+    //     if (reviews.length > 0) {
+    //       const totalRating = reviews.reduce(
+    //         (sum, review) => sum + review.rating,
+    //         0
+    //       );
+    //       const averageRating = totalRating / reviews.length;
+
+    //       await sessionCollections.updateOne(
+    //         { _id: new ObjectId(sessionId) },
+    //         {
+    //           $set: {
+    //             averageRating: parseFloat(averageRating.toFixed(1)),
+    //             reviewCount: reviews.length,
+    //           },
+    //         }
+    //       );
+    //     }
+    //   } catch (error) {
+    //     console.error("Failed to update session rating:", error);
+    //   }
+    // }
+
+    // session details
+    app.get("/api/sessions/:sessionId", async (req, res) => {
+      try {
+        const { sessionId } = req.params;
+
+        // Convert to ObjectId
+        const session = await sessionCollections.findOne({
+          _id: new ObjectId(sessionId),
+        });
+
+        if (!session) {
+          return res.status(404).json({ message: "Session not found" });
+        }
+
+        res.status(200).send(session);
+      } catch (error) {
+        console.error("Error getting session:", error);
+        res.status(500).json({ message: "Server error" });
+      }
+    });
+
+    // GET reviews by sessionId
+    app.get("/api/reviews/:sessionId", async (req, res) => {
+      try {
+        const { sessionId } = req.params;
+
+        // Validate sessionId format
+        if (!ObjectId.isValid(sessionId)) {
+          return res.status(400).json({ message: "Invalid session ID format" });
+        }
+
+        // Check if session exists (optional but recommended)
+        const sessionExists = await sessionCollections.findOne({
+          _id: new ObjectId(sessionId),
+        });
+
+        if (!sessionExists) {
+          return res.status(404).json({ message: "Session not found" });
+        }
+
+        // Get all reviews for this session
+        const reviews = await db
+          .collection("reviews")
+          .find({ sessionId })
+          .sort({ createdAt: -1 }) // Newest first
+          .toArray();
+
+        res.status(200).json(reviews);
+      } catch (error) {
+        console.error("Error fetching reviews:", error);
+        res.status(500).json({ message: "Failed to fetch reviews" });
       }
     });
 
