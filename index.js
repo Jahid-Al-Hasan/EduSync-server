@@ -43,6 +43,7 @@ async function run() {
     const usersCollection = db.collection("users");
     const sessionCollections = db.collection("study-sessions");
     const reviewsCollection = db.collection("reviews");
+    const bookedSessionsCollection = db.collection("booked-sessions");
 
     // custom middlewares
     const verifyFirebaseToken = async (req, res, next) => {
@@ -327,6 +328,7 @@ async function run() {
     app.get("/api/sessions/:sessionId", async (req, res) => {
       try {
         const { sessionId } = req.params;
+        const { studentEmail } = req.query;
 
         // Convert to ObjectId
         const session = await sessionCollections.findOne({
@@ -337,7 +339,17 @@ async function run() {
           return res.status(404).json({ message: "Session not found" });
         }
 
-        res.status(200).send(session);
+        let isBooked = false;
+
+        if (studentEmail) {
+          const booking = await bookedSessionsCollection.findOne({
+            sessionId: new ObjectId(sessionId),
+            studentEmail,
+          });
+          isBooked = !!booking;
+        }
+
+        res.status(200).json({ ...session, isBooked });
       } catch (error) {
         console.error("Error getting session:", error);
         res.status(500).json({ message: "Server error" });
@@ -376,6 +388,58 @@ async function run() {
         res.status(500).json({ message: "Failed to fetch reviews" });
       }
     });
+
+    // create booking
+    app.post(
+      "/api/booking",
+      verifyFirebaseToken,
+      verifyStudent,
+      async (req, res) => {
+        try {
+          const {
+            sessionId,
+            studentEmail,
+            studentName,
+            tutorEmail,
+            tutorName,
+            bookingDate,
+            paymentStatus,
+            status,
+            sessionTitle,
+            sessionDate,
+          } = req.body;
+
+          if (!sessionId || !studentEmail || !tutorEmail) {
+            return res.status(400).json({ message: "Required fields missing" });
+          }
+
+          const bookingData = {
+            sessionId: new ObjectId(sessionId),
+            studentEmail,
+            studentName,
+            tutorEmail,
+            tutorName,
+            bookingDate: new Date(bookingDate),
+            paymentStatus,
+            status,
+            sessionTitle,
+            sessionDate: new Date(sessionDate),
+          };
+
+          const result = await bookedSessionsCollection.insertOne(bookingData);
+
+          if (!result) {
+            res.status(401).send({ message: "Booking not created" });
+          }
+          res.status(201).json({
+            message: "Booking created successfully",
+            insertedId: result.insertedId,
+          });
+        } catch (error) {
+          res.status(500).json({ message: "Error checking booking" });
+        }
+      }
+    );
 
     // await client.db("admin").command({ ping: 1 });
     // console.log("connected to mongodb");
