@@ -75,7 +75,7 @@ async function run() {
           .json({ message: "Forbidden - invalid or expired token" });
       }
     };
-    // verify student
+
     // Middleware to verify if user is a student
     const verifyStudent = async (req, res, next) => {
       try {
@@ -96,6 +96,36 @@ async function run() {
         if (user.role !== "student") {
           return res.status(403).json({
             message: "Access denied - Student privileges required",
+          });
+        }
+
+        next();
+      } catch (error) {
+        console.error("Student verification error:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    };
+
+    // verify tutor
+    const verifyTutor = async (req, res, next) => {
+      try {
+        // First verify Firebase token (if not already done)
+        if (!req.user) {
+          return res.status(401).json({ message: "Authentication required" });
+        }
+
+        const userEmail = req.user.email;
+
+        // Check user role in database
+        const user = await usersCollection.findOne({ email: userEmail });
+
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        if (user.role !== "tutor") {
+          return res.status(403).json({
+            message: "Access denied - Tutor privileges required",
           });
         }
 
@@ -226,7 +256,7 @@ async function run() {
       verifyStudent,
       async (req, res) => {
         try {
-          const { sessionId, rating, comment, userName } = req.body;
+          const { sessionId, studentName, rating, comment } = req.body;
           const userEmail = req.user.email;
 
           // Validate input
@@ -270,7 +300,7 @@ async function run() {
           const newReview = {
             sessionId,
             studentEmail: userEmail,
-            studentName: userName || userEmail.split("@")[0], // Fallback to email prefix if no name
+            studentName: studentName || userEmail.split("@")[0], // Fallback to email prefix if no name
             rating: parseInt(rating),
             comment: comment || "",
             createdAt: new Date(),
