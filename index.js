@@ -402,11 +402,10 @@ async function run() {
             studentName,
             tutorEmail,
             tutorName,
-            bookingDate,
-            paymentStatus,
-            status,
+            registrationFee,
             sessionTitle,
-            sessionDate,
+            classStart,
+            classEnd,
           } = req.body;
 
           if (!sessionId || !studentEmail || !tutorEmail) {
@@ -419,11 +418,11 @@ async function run() {
             studentName,
             tutorEmail,
             tutorName,
-            bookingDate: new Date(bookingDate),
-            paymentStatus,
-            status,
+            bookingDate: new Date().toISOString(),
+            registrationFee,
             sessionTitle,
-            sessionDate: new Date(sessionDate),
+            classStart: new Date(classStart),
+            classEnd: new Date(classEnd),
           };
 
           const result = await bookedSessionsCollection.insertOne(bookingData);
@@ -437,6 +436,36 @@ async function run() {
           });
         } catch (error) {
           res.status(500).json({ message: "Error checking booking" });
+        }
+      }
+    );
+
+    // GET booked sessions with filtering
+    app.get(
+      "/api/booked-sessions",
+      verifyFirebaseToken,
+      verifyStudent,
+      async (req, res) => {
+        try {
+          const { studentEmail } = req.query;
+
+          if (!studentEmail) {
+            return res
+              .status(400)
+              .json({ message: "Student email is required" });
+          }
+
+          const query = { studentEmail };
+
+          const sessions = await bookedSessionsCollection
+            .find(query)
+            .sort({ sessionDate: 1 }) // Optional: Sort by session date ascending
+            .toArray();
+
+          res.status(200).json(sessions);
+        } catch (error) {
+          console.error("Error fetching booked sessions:", error);
+          res.status(500).json({ message: "Failed to fetch booked sessions" });
         }
       }
     );
