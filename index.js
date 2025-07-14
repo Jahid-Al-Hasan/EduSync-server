@@ -445,6 +445,62 @@ async function run() {
       }
     });
 
+    // GET session by tutor email
+    app.get(
+      "/api/my-sessions",
+      verifyFirebaseToken,
+      verifyTutor,
+      async (req, res) => {
+        const { tutorEmail } = req.query;
+        try {
+          const sessions = await sessionCollections
+            .find({ tutorEmail })
+            .toArray();
+          res.json(sessions);
+        } catch (error) {
+          res.status(500).json({ error: error.message });
+        }
+      }
+    );
+
+    // update rejected session status
+    app.patch(
+      "/api/sessions/resubmit/:sessionId",
+      verifyFirebaseToken,
+      verifyTutor,
+      async (req, res) => {
+        try {
+          const { sessionId } = req.params;
+
+          if (!sessionId) {
+            return res.status(400).send({ message: "Session ID is required" });
+          }
+
+          const result = await sessionCollections.updateOne(
+            { _id: new ObjectId(sessionId) },
+            { $set: { status: "pending" } }
+          );
+
+          if (result.modifiedCount === 0) {
+            return res
+              .status(400)
+              .send({ message: "No session updated. It may not exist." });
+          }
+
+          res
+            .status(200)
+            .send({ message: "Session resubmitted for approval." });
+        } catch (error) {
+          console.error("Error updating session status:", error);
+          res
+            .status(500)
+            .json({
+              message: "Internal server error. Please try again later.",
+            });
+        }
+      }
+    );
+
     // GET reviews by sessionId
     app.get("/api/reviews/:sessionId", async (req, res) => {
       try {
