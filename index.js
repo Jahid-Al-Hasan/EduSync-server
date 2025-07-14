@@ -214,25 +214,84 @@ async function run() {
       }
     });
 
-    // GET /api/userRole?email=user@example.com
-    // app.get("/api/userRole", verifyFirebaseToken, async (req, res) => {
-    //   try {
-    //     const email = req.query.email;
-    //     if (!email) {
-    //       return res.status(400).json({ message: "Email is required" });
-    //     }
+    // POST: create-session
+    app.post(
+      "/api/create-session",
+      verifyFirebaseToken,
+      verifyTutor,
+      async (req, res) => {
+        try {
+          // Validate required fields
+          const requiredFields = [
+            "title",
+            "tutorName",
+            "tutorEmail",
+            "description",
+            "registrationStart",
+            "registrationEnd",
+            "classStart",
+            "classEnd",
+            "duration",
+            "maxStudents",
+          ];
 
-    //     const user = await usersCollection.findOne({ email });
-    //     if (!user) {
-    //       return res.status(404).json({ message: "User not found" });
-    //     }
+          for (const field of requiredFields) {
+            if (!req.body[field]) {
+              return res.status(400).json({ error: `${field} is required` });
+            }
+          }
 
-    //     res.status(200).json({ role: user.role });
-    //   } catch (error) {
-    //     console.error("Failed to fetch role:", error.message);
-    //     res.status(500).json({ message: "Internal server error" });
-    //   }
-    // });
+          // Validate dates
+          const registrationStart = new Date(req.body.registrationStart);
+          const registrationEnd = new Date(req.body.registrationEnd);
+          const classStart = new Date(req.body.classStart);
+          const classEnd = new Date(req.body.classEnd);
+
+          if (registrationStart >= registrationEnd) {
+            return res.status(400).json({
+              error: "Registration end must be after registration start",
+            });
+          }
+
+          if (classStart >= classEnd) {
+            return res
+              .status(400)
+              .json({ error: "Class end must be after class start" });
+          }
+
+          if (classStart <= registrationEnd) {
+            return res
+              .status(400)
+              .json({ error: "Class must start after registration ends" });
+          }
+
+          // Prepare session data
+          const sessionData = {
+            ...req.body,
+            registrationStart,
+            registrationEnd,
+            classStart,
+            classEnd,
+            currentStudents: 0,
+            status: "pending",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          };
+
+          // Insert into database
+          const result = await sessionCollections.insertOne(sessionData);
+
+          if (result.insertedId) {
+            return res.status(201).send(result);
+          }
+
+          res.status(400).send({ message: "Something went wrong" });
+        } catch (error) {
+          console.error("Error creating session:", error);
+          res.status(500).json({ error: "Failed to create session" });
+        }
+      }
+    );
 
     // Get all approved sessions
     app.get("/api/study-sessions/approved", async (req, res) => {
