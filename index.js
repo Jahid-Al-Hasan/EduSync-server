@@ -840,6 +840,34 @@ async function run() {
       }
     );
 
+    // GET materials by id
+    app.get(
+      "/api/materials",
+      verifyFirebaseToken,
+      verifyStudent,
+      async (req, res) => {
+        try {
+          const { sessionId } = req.query;
+
+          if (!sessionId || !ObjectId.isValid(sessionId)) {
+            return res
+              .status(400)
+              .json({ message: "A valid sessionId is required." });
+          }
+
+          const materials = await sessionMaterialsCollection
+            .find({ sessionId })
+            .sort({ createdAt: -1 }) // optional: show latest materials first
+            .toArray();
+
+          res.status(200).json(materials);
+        } catch (error) {
+          console.error("Error fetching materials:", error);
+          res.status(500).json({ message: "Failed to fetch materials" });
+        }
+      }
+    );
+
     // await client.db("admin").command({ ping: 1 });
     // console.log("connected to mongodb");
   } catch (error) {
