@@ -492,11 +492,30 @@ async function run() {
             .send({ message: "Session resubmitted for approval." });
         } catch (error) {
           console.error("Error updating session status:", error);
-          res
-            .status(500)
-            .json({
-              message: "Internal server error. Please try again later.",
-            });
+          res.status(500).json({
+            message: "Internal server error. Please try again later.",
+          });
+        }
+      }
+    );
+
+    // Get approved sessions for a tutor
+    app.get(
+      "/api/study-sessions/approved/tutor",
+      verifyFirebaseToken,
+      verifyTutor,
+      async (req, res) => {
+        try {
+          const tutorEmail = req.query.tutorEmail;
+          const sessions = await sessionCollections
+            .find({ tutorEmail: tutorEmail, status: "approved" })
+            .toArray();
+          if (!sessions) {
+            return res.status(404).send({ message: "No sessions found" });
+          }
+          res.status(200).send(sessions);
+        } catch (error) {
+          res.status(500).json({ message: "Server error" });
         }
       }
     );
