@@ -45,6 +45,7 @@ async function run() {
     const reviewsCollection = db.collection("reviews");
     const bookedSessionsCollection = db.collection("booked-sessions");
     const sessionMaterialsCollection = db.collection("session-materials");
+    const studentNotesCollection = db.collection("student-notes");
 
     // custom middlewares
     const verifyFirebaseToken = async (req, res, next) => {
@@ -672,7 +673,7 @@ async function run() {
       }
     );
 
-    // GET booked sessions with filtering
+    // GET booked sessions by student
     app.get(
       "/api/booked-sessions",
       verifyFirebaseToken,
@@ -698,6 +699,143 @@ async function run() {
         } catch (error) {
           console.error("Error fetching booked sessions:", error);
           res.status(500).json({ message: "Failed to fetch booked sessions" });
+        }
+      }
+    );
+
+    // POST student notes
+    app.post(
+      "/api/student-notes",
+      verifyFirebaseToken,
+      verifyStudent,
+      async (req, res) => {
+        try {
+          const { email, title, description } = req.body;
+
+          // Validate input
+          if (!email || !title || !description) {
+            return res.status(400).send({
+              message: "Email, title, and description are required.",
+            });
+          }
+
+          const note = {
+            email,
+            title,
+            description,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          };
+
+          const result = await studentNotesCollection.insertOne(note);
+
+          if (!result.insertedId) {
+            return res.status(500).send({
+              message: "Failed to save note. Please try again.",
+            });
+          }
+
+          res.status(201).send({
+            message: "Note saved successfully",
+            noteId: result.insertedId,
+          });
+        } catch (error) {
+          console.error("Error saving student note:", error);
+          res
+            .status(500)
+            .json({ message: "Failed to save student note. Server error." });
+        }
+      }
+    );
+
+    // Get student's notes
+    app.get(
+      "/api/student-notes",
+      verifyFirebaseToken,
+      verifyStudent,
+      async (req, res) => {
+        try {
+          const { email } = req.query;
+
+          if (!email) {
+            return res
+              .status(400)
+              .json({ message: "Email query parameter is required." });
+          }
+
+          const notes = await studentNotesCollection
+            .find({ email })
+            .sort({ createdAt: -1 })
+            .toArray();
+
+          res.status(200).json(notes);
+        } catch (error) {
+          console.error("Error fetching student notes:", error);
+          res.status(500).json({ message: "Failed to fetch notes" });
+        }
+      }
+    );
+
+    // update student's note
+    app.patch(
+      "/api/student-notes/:id",
+      verifyFirebaseToken,
+      verifyStudent,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const { title, description } = req.body;
+
+          if (!title || !description) {
+            return res
+              .status(400)
+              .json({ message: "Title and description are required." });
+          }
+
+          const updatedNote = await studentNotesCollection.findOneAndUpdate(
+            { _id: new ObjectId(id) },
+            {
+              $set: {
+                title,
+                description,
+                updatedAt: new Date(),
+              },
+            }
+          );
+
+          if (!updatedNote) {
+            return res.status(404).json({ message: "Note not found." });
+          }
+
+          res.status(200).json(updatedNote.value);
+        } catch (error) {
+          console.error("Error updating note:", error);
+          res.status(500).json({ message: "Internal server error" });
+        }
+      }
+    );
+
+    // delete student's note
+    app.delete(
+      "/api/student-notes/:id",
+      verifyFirebaseToken,
+      verifyStudent,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+
+          const result = await studentNotesCollection.deleteOne({
+            _id: new ObjectId(id),
+          });
+
+          if (result.deletedCount === 0) {
+            return res.status(404).json({ message: "Note not found" });
+          }
+
+          res.status(200).json({ message: "Note deleted successfully" });
+        } catch (error) {
+          console.error("Error deleting note:", error);
+          res.status(500).json({ message: "Internal server error" });
         }
       }
     );
