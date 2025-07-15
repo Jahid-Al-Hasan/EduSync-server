@@ -44,6 +44,7 @@ async function run() {
     const sessionCollections = db.collection("study-sessions");
     const reviewsCollection = db.collection("reviews");
     const bookedSessionsCollection = db.collection("booked-sessions");
+    const sessionMaterialsCollection = db.collection("session-materials");
 
     // custom middlewares
     const verifyFirebaseToken = async (req, res, next) => {
@@ -516,6 +517,73 @@ async function run() {
           res.status(200).send(sessions);
         } catch (error) {
           res.status(500).json({ message: "Server error" });
+        }
+      }
+    );
+
+    // POST: upload tutor materials by sessionId
+    app.post(
+      "/api/tutor-materials",
+      verifyFirebaseToken,
+      verifyTutor,
+      async (req, res) => {
+        try {
+          const {
+            title,
+            sessionTitle,
+            sessionId,
+            tutorEmail,
+            imageUrl,
+            driveLink,
+          } = req.body;
+
+          // Validate required fields
+          if (!title || !sessionId || !sessionTitle || !tutorEmail) {
+            return res.status(400).send({ message: "Missing required fields" });
+          }
+
+          const materials = {
+            title,
+            sessionId,
+            sessionTitle,
+            tutorEmail,
+            imageUrl: imageUrl || "",
+            driveLink: driveLink || "",
+            createdAt: new Date(),
+          };
+
+          const result = await sessionMaterialsCollection.insertOne(materials);
+
+          if (result.insertedId) {
+            return res.status(201).json({
+              message: "Study material uploaded successfully",
+              materialId: result.insertedId,
+            });
+          } else {
+            return res
+              .status(500)
+              .json({ message: "Failed to upload material" });
+          }
+        } catch (error) {
+          console.error("Upload error:", error);
+          res.status(500).json({ message: "Server error" });
+        }
+      }
+    );
+
+    // GET: all materials create by a tutor
+    app.get(
+      "/api/tutor-materials",
+      verifyFirebaseToken,
+      verifyTutor,
+      async (req, res) => {
+        try {
+          const materials = await sessionMaterialsCollection
+            .find({ tutorEmail: req.user.email })
+            .toArray();
+          res.status(200).json(materials);
+        } catch (error) {
+          res.status(500).json({ message: "Failed to fetch materials" });
         }
       }
     );
