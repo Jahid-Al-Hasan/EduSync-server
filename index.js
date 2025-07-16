@@ -960,6 +960,109 @@ async function run() {
       }
     );
 
+    // Get all sessions
+    app.get(
+      "/api/sessions",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const sessions = await sessionCollections
+            .find()
+            .sort({ createdAt: -1 })
+            .toArray();
+          res.json(sessions);
+        } catch (error) {
+          res.status(500).json({ error: error.message });
+        }
+      }
+    );
+
+    // Approve session
+    app.patch(
+      "/api/sessions/:sessionId/approve",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { sessionId } = req.params;
+          const { registrationFee } = req.body;
+
+          const updatedSession = await sessionCollections.findOneAndUpdate(
+            { _id: new ObjectId(sessionId) },
+            {
+              $set: {
+                status: "approved",
+                registrationFee,
+                approvedAt: new Date(),
+              },
+            }
+          );
+
+          if (!updatedSession) {
+            return res.status(404).json({ error: "Session not found" });
+          }
+
+          res.json(updatedSession);
+        } catch (error) {
+          res.status(500).json({ error: error.message });
+        }
+      }
+    );
+
+    // Reject session
+    app.patch(
+      "/api/sessions/:sessionId/reject",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { sessionId } = req.params;
+
+          const updatedSession = await sessionCollections.findOneAndUpdate(
+            { _id: new ObjectId(sessionId) },
+            {
+              $set: { status: "rejected", rejectedAt: new Date() },
+            }
+          );
+
+          if (!updatedSession) {
+            return res.status(404).json({ error: "Session not found" });
+          }
+
+          res.json(updatedSession);
+        } catch (error) {
+          res.status(500).json({ error: error.message });
+        }
+      }
+    );
+
+    // Delete session
+    app.delete(
+      "/api/sessions/:sessionId",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { sessionId } = req.params;
+          if (!sessionId) {
+            return res.status(400).send({ message: "SessionId not found" });
+          }
+          const result = await sessionCollections.deleteOne({
+            _id: new ObjectId(sessionId),
+          });
+          if (!result) {
+            return res
+              .status(400)
+              .send({ message: "Not updated successfully" });
+          }
+          res.json({ message: "Session deleted successfully" });
+        } catch (error) {
+          res.status(500).json({ error: error.message });
+        }
+      }
+    );
+
     // await client.db("admin").command({ ping: 1 });
     // console.log("connected to mongodb");
   } catch (error) {
