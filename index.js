@@ -138,6 +138,36 @@ async function run() {
       }
     };
 
+    // verify tutor
+    const verifyAdmin = async (req, res, next) => {
+      try {
+        // First verify Firebase token (if not already done)
+        if (!req.user) {
+          return res.status(401).json({ message: "Authentication required" });
+        }
+
+        const userEmail = req.user.email;
+
+        // Check user role in database
+        const user = await usersCollection.findOne({ email: userEmail });
+
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        if (user.role !== "admin") {
+          return res.status(403).json({
+            message: "Access denied - Tutor privileges required",
+          });
+        }
+
+        next();
+      } catch (error) {
+        console.error("Student verification error:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    };
+
     // ✅ Protected route example
     app.get("/data", verifyFirebaseToken, async (req, res) => {
       // Optional: Access UID or email from decoded token
@@ -864,6 +894,68 @@ async function run() {
         } catch (error) {
           console.error("Error fetching materials:", error);
           res.status(500).json({ message: "Failed to fetch materials" });
+        }
+      }
+    );
+
+    // // Get all users with search
+    app.get(
+      "/api/users",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { search } = req.query;
+          let query = {};
+
+          if (search) {
+            query = {
+              $or: [
+                // { name: { $regex: search, $options: "i" } },
+                { email: { $regex: search, $options: "i" } },
+              ],
+            };
+          }
+
+          const users = await usersCollection
+            .find(query)
+            .sort({ createdAt: -1 })
+            .toArray();
+          res.json(users);
+        } catch (error) {
+          res.status(500).json({ error: error.message });
+        }
+      }
+    );
+
+    // Update user role
+    app.patch(
+      "/api/users/:userId/role",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { userId } = req.params;
+          const { role } = req.body;
+
+          if (!["admin", "tutor", "student"].includes(role)) {
+            return res.status(400).json({ error: "Invalid role" });
+          }
+
+          const updatedUser = await usersCollection.findOneAndUpdate(
+            { _id: new ObjectId(userId) },
+            {
+              $set: { role },
+            }
+          );
+
+          if (!updatedUser) {
+            return res.status(404).json({ error: "User not found" });
+          }
+
+          res.json(updatedUser);
+        } catch (error) {
+          res.status(500).json({ error: error.message });
         }
       }
     );
