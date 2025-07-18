@@ -1063,6 +1063,63 @@ async function run() {
       }
     );
 
+    // Get all materials with pagination
+    app.get(
+      "/api/materials/all",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const page = parseInt(req.query.page) || 1;
+          const limit = parseInt(req.query.limit) || 10;
+
+          const materials = await sessionMaterialsCollection
+            .find()
+            .sort({ createdAt: -1 })
+            .skip((page - 1) * limit)
+            .limit(limit)
+            .toArray();
+
+          const total = await sessionMaterialsCollection.countDocuments();
+
+          res.json({ total, materials });
+        } catch (error) {
+          res.status(500).json({ error: error.message });
+        }
+      }
+    );
+
+    // Delete material
+    app.delete(
+      "/api/materials/:id",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+
+          if (!ObjectId.isValid(id)) {
+            return res.status(400).json({ error: "Invalid material ID" });
+          }
+
+          const result = await sessionMaterialsCollection.deleteOne({
+            _id: new ObjectId(id),
+          });
+
+          if (result.deletedCount === 0) {
+            return res.status(404).json({ error: "Material not found" });
+          }
+
+          res.json({ message: "Material deleted successfully" });
+        } catch (error) {
+          console.error("Delete error:", error);
+          res
+            .status(500)
+            .json({ error: "Server error. Please try again later." });
+        }
+      }
+    );
+
     // await client.db("admin").command({ ping: 1 });
     // console.log("connected to mongodb");
   } catch (error) {
