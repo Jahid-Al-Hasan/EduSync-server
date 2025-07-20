@@ -1012,27 +1012,100 @@ async function run() {
 
     // Reject session
     app.patch(
-      "/api/sessions/:sessionId/reject",
+      "/api/sessions/:id/reject",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        console.log(req.body, req.params.id);
+        const { id } = req.params;
+        const { rejectionReason, rejectionFeedback } = req.body;
+
+        if (!rejectionReason || !rejectionFeedback) {
+          return res
+            .status(400)
+            .json({ error: "Reason and feedback are required." });
+        }
+
+        try {
+          const result = await sessionCollections.updateOne(
+            { _id: new ObjectId(id) },
+            {
+              $set: {
+                status: "rejected",
+                rejectionReason,
+                rejectionFeedback,
+                rejectedAt: new Date(),
+                rejectedBy: req.user.email, // if available from Firebase token
+              },
+            }
+          );
+
+          if (result.modifiedCount === 0) {
+            return res
+              .status(404)
+              .json({ error: "Session not found or already updated." });
+          }
+
+          res.json({ message: "Session rejected successfully." });
+        } catch (error) {
+          console.error("Reject session error:", error);
+          res.status(500).json({ error: "Internal server error" });
+        }
+      }
+    );
+
+    // update session
+    app.patch(
+      "/api/sessions/:id",
       verifyFirebaseToken,
       verifyAdmin,
       async (req, res) => {
         try {
-          const { sessionId } = req.params;
+          const sessionId = req.params.id;
+          const {
+            title,
+            description,
+            maxStudents,
+            registrationStart,
+            registrationEnd,
+            classStart,
+            classEnd,
+            registrationFee,
+          } = req.body;
 
-          const updatedSession = await sessionCollections.findOneAndUpdate(
+          if (!title || !description) {
+            return res
+              .status(400)
+              .json({ message: "Title and description are required." });
+          }
+
+          const updateResult = await sessionCollections.updateOne(
             { _id: new ObjectId(sessionId) },
             {
-              $set: { status: "rejected", rejectedAt: new Date() },
+              $set: {
+                title,
+                description,
+                maxStudents,
+                registrationStart,
+                registrationEnd,
+                classStart,
+                classEnd,
+                registrationFee: parseInt(registrationFee) || 0,
+                updatedAt: new Date().toISOString(),
+              },
             }
           );
 
-          if (!updatedSession) {
-            return res.status(404).json({ error: "Session not found" });
+          if (updateResult.matchedCount === 0) {
+            return res.status(404).json({ message: "Session not found." });
           }
 
-          res.json(updatedSession);
+          res.json({ message: "Session updated successfully." });
         } catch (error) {
-          res.status(500).json({ error: error.message });
+          console.error("Update session error:", error);
+          res
+            .status(500)
+            .json({ message: "Internal server error", error: error.message });
         }
       }
     );
