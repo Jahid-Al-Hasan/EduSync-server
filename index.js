@@ -495,6 +495,62 @@ async function run() {
       }
     );
 
+    // update session by tutor
+    app.patch(
+      "/api/sessions/:id/tutor",
+      verifyFirebaseToken,
+      verifyTutor,
+      async (req, res) => {
+        try {
+          const sessionId = req.params.id;
+          const {
+            title,
+            description,
+            maxStudents,
+            registrationStart,
+            registrationEnd,
+            classStart,
+            classEnd,
+            registrationFee,
+          } = req.body;
+
+          if (!title || !description) {
+            return res
+              .status(400)
+              .json({ message: "Title and description are required." });
+          }
+
+          const updateResult = await sessionCollections.updateOne(
+            { _id: new ObjectId(sessionId) },
+            {
+              $set: {
+                title,
+                description,
+                maxStudents,
+                registrationStart,
+                registrationEnd,
+                classStart,
+                classEnd,
+                registrationFee: parseInt(registrationFee) || 0,
+                updatedAt: new Date().toISOString(),
+              },
+            }
+          );
+
+          if (updateResult.matchedCount === 0) {
+            return res.status(404).json({ message: "Session not found." });
+          }
+
+          res.json({ message: "Session updated successfully." });
+        } catch (error) {
+          console.error("Update session error:", error);
+          res
+            .status(500)
+            .json({ message: "Internal server error", error: error.message });
+        }
+      }
+    );
+
     // update rejected session status
     app.patch(
       "/api/sessions/resubmit/:sessionId",
