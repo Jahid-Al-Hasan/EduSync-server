@@ -1,12 +1,12 @@
 const express = require("express");
 const app = express();
 require("dotenv").config();
+const jwt = require("jsonwebtoken");
+const cookieParser = require("cookie-parser");
 const port = process.env.PORT || 3001;
 const cors = require("cors");
 const { MongoClient, ServerApiVersion } = require("mongodb");
 const { ObjectId } = require("mongodb");
-const admin = require("firebase-admin");
-// const serviceAccount = require("./firebaseServiceAccountKey.json");
 
 // middlewares
 app.use(
@@ -16,16 +16,7 @@ app.use(
   })
 );
 app.use(express.json());
-
-// firebase admin credentials
-const decoded = Buffer.from(process.env.FIREBASE_KEY_BASE64, "base64").toString(
-  "utf8"
-);
-const serviceAccount = JSON.parse(decoded);
-
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
+app.use(cookieParser());
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(process.env.MONGODB_URI, {
@@ -47,36 +38,75 @@ async function run() {
     const sessionMaterialsCollection = db.collection("session-materials");
     const studentNotesCollection = db.collection("student-notes");
 
-    // custom middlewares
-    const verifyFirebaseToken = async (req, res, next) => {
-      const authHeader = req?.headers?.authorization;
-
-      // 1. Check for Authorization header
-      if (!authHeader?.startsWith("Bearer ")) {
-        return res
-          .status(401)
-          .json({ message: "Unauthorized access - no token provided" });
-      }
-
-      const token = authHeader.split(" ")[1];
-
+    // jwt generate
+    app.post("/api/generate-jwt", (req, res) => {
       try {
-        // 2. Verify the token using Firebase Admin SDK
-        const decodedUser = await admin.auth().verifyIdToken(token);
+        const user = { email: req.body.email };
+        // console.log(email);
+        const token = jwt.sign(user, process.env.JWT_SECRET, {
+          expiresIn: "1d",
+        });
+        if (!token) {
+          return res.status(401).json({
+            error: "Token not generated",
+          });
+        }
+        res
+          .cookie("token", token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production", // true on Vercel
+            sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+          })
+          .send({ message: "JWT generated successfully" });
+      } catch (error) {
+        console.error("JWT generation failed:", error.message);
+        res.status(500).send({ error: "JWT creation failed" });
+      }
+    });
 
-        // 3. Attach decoded user to the request
-        req.user = decodedUser;
-        // console.log(req, user);
-
-        // 4. Proceed to next middleware or route
+    // jwt middleware
+    const verifyJWT = async (req, res, next) => {
+      try {
+        const token = req?.cookies?.token;
+        if (!token) {
+          return res.status(401).json({
+            message: "Unauthorized access!",
+          });
+        }
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        // const userEmail = req?.query?.email;
+        // if (userEmail !== decoded.email) {
+        //   return res.status(403).json({
+        //     message: "Unauthorized access",
+        //   });
+        // }
+        req.user = decoded;
         next();
       } catch (error) {
-        console.error("Token verification failed:", error.message); // helpful in dev
-        return res
-          .status(403)
-          .json({ message: "Forbidden - invalid or expired token" });
+        console.log(error);
+        return res.status(500).json({
+          message: "Something went wrong!",
+        });
       }
     };
+
+    // clear cookie
+    app.get("/api/clear-cookie", (req, res) => {
+      try {
+        res
+          .clearCookie("token", {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+          })
+          .send({ message: "Cookie cleared successfully" });
+      } catch (error) {
+        console.error("Clear Cookie Error:", error.message);
+        res
+          .status(500)
+          .send({ error: "Something happened while Clear cookie" });
+      }
+    });
 
     // Middleware to verify if user is a student
     const verifyStudent = async (req, res, next) => {
@@ -168,17 +198,10 @@ async function run() {
       }
     };
 
-    // ✅ Protected route example
-    app.get("/data", verifyFirebaseToken, async (req, res) => {
-      // Optional: Access UID or email from decoded token
-      const { uid, email } = req.user;
-      res.json({ message: "Token verified", uid, email });
-    });
-
     // create user
-    app.post("/api/registerUser", verifyFirebaseToken, async (req, res) => {
+    app.post("/api/registerUser", verifyJWT, async (req, res) => {
       try {
-        const { email, role } = req.body;
+        const { email, role, name, photoURL } = req.body;
 
         // ✅ Basic validation
         if (!email || !role) {
@@ -204,8 +227,10 @@ async function run() {
         }
 
         const newUser = {
+          name,
           email,
           role,
+          photoURL,
           CreatedAt: new Date().toISOString(),
         };
         const result = await usersCollection.insertOne(newUser);
@@ -219,7 +244,7 @@ async function run() {
     });
 
     // find user by email
-    app.get("/api/user", verifyFirebaseToken, async (req, res) => {
+    app.get("/api/user", verifyJWT, async (req, res) => {
       try {
         const email = req.user?.email;
 
@@ -249,7 +274,7 @@ async function run() {
     // POST: create-session
     app.post(
       "/api/create-session",
-      verifyFirebaseToken,
+      verifyJWT,
       verifyTutor,
       async (req, res) => {
         try {
@@ -341,79 +366,72 @@ async function run() {
     });
 
     // POST reviews
-    app.post(
-      "/api/reviews",
-      verifyFirebaseToken,
-      verifyStudent,
-      async (req, res) => {
-        try {
-          const { sessionId, studentName, rating, comment } = req.body;
-          const userEmail = req.user.email;
+    app.post("/api/reviews", verifyJWT, verifyStudent, async (req, res) => {
+      try {
+        const { sessionId, studentName, rating, comment } = req.body;
+        const userEmail = req.user.email;
 
-          // Validate input
-          if (!ObjectId.isValid(sessionId)) {
-            return res
-              .status(400)
-              .json({ message: "Invalid session ID format" });
-          }
-
-          if (!rating || isNaN(rating) || rating < 1 || rating > 5) {
-            return res
-              .status(400)
-              .json({ message: "Rating must be between 1-5" });
-          }
-
-          // Check if session exists
-          const session = await sessionCollections.findOne({
-            _id: new ObjectId(sessionId),
-            status: "approved", // Only allow reviews for approved sessions
-          });
-
-          if (!session) {
-            return res
-              .status(404)
-              .json({ message: "Session not found or not approved" });
-          }
-
-          // Check if user already reviewed this session
-          const existingReview = await reviewsCollection.findOne({
-            sessionId,
-            studentEmail: userEmail,
-          });
-
-          if (existingReview) {
-            return res
-              .status(400)
-              .json({ message: "You've already reviewed this session" });
-          }
-
-          // Create new review
-          const newReview = {
-            sessionId,
-            studentEmail: userEmail,
-            studentName: studentName || userEmail.split("@")[0], // Fallback to email prefix if no name
-            rating: parseInt(rating),
-            comment: comment || "",
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          };
-
-          // Insert review
-          const result = await reviewsCollection.insertOne(newReview);
-
-          // Update session's average rating (optional enhancement)
-          await updateSessionAverageRating(sessionId);
-
-          res.status(201).json({
-            message: "Review submitted successfully",
-            reviewId: result.insertedId,
-          });
-        } catch (error) {
-          console.error("Review submission error:", error);
-          res.status(500).json({ message: "Failed to submit review" });
+        // Validate input
+        if (!ObjectId.isValid(sessionId)) {
+          return res.status(400).json({ message: "Invalid session ID format" });
         }
+
+        if (!rating || isNaN(rating) || rating < 1 || rating > 5) {
+          return res
+            .status(400)
+            .json({ message: "Rating must be between 1-5" });
+        }
+
+        // Check if session exists
+        const session = await sessionCollections.findOne({
+          _id: new ObjectId(sessionId),
+          status: "approved", // Only allow reviews for approved sessions
+        });
+
+        if (!session) {
+          return res
+            .status(404)
+            .json({ message: "Session not found or not approved" });
+        }
+
+        // Check if user already reviewed this session
+        const existingReview = await reviewsCollection.findOne({
+          sessionId,
+          studentEmail: userEmail,
+        });
+
+        if (existingReview) {
+          return res
+            .status(400)
+            .json({ message: "You've already reviewed this session" });
+        }
+
+        // Create new review
+        const newReview = {
+          sessionId,
+          studentEmail: userEmail,
+          studentName: studentName || userEmail.split("@")[0], // Fallback to email prefix if no name
+          rating: parseInt(rating),
+          comment: comment || "",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+
+        // Insert review
+        const result = await reviewsCollection.insertOne(newReview);
+
+        // Update session's average rating (optional enhancement)
+        await updateSessionAverageRating(sessionId);
+
+        res.status(201).json({
+          message: "Review submitted successfully",
+          reviewId: result.insertedId,
+        });
+      } catch (error) {
+        console.error("Review submission error:", error);
+        res.status(500).json({ message: "Failed to submit review" });
       }
-    );
+    });
 
     // Helper function to update session's average rating
     // async function updateSessionAverageRating(sessionId) {
@@ -478,27 +496,22 @@ async function run() {
     });
 
     // GET session by tutor email
-    app.get(
-      "/api/my-sessions",
-      verifyFirebaseToken,
-      verifyTutor,
-      async (req, res) => {
-        const { tutorEmail } = req.query;
-        try {
-          const sessions = await sessionCollections
-            .find({ tutorEmail })
-            .toArray();
-          res.json(sessions);
-        } catch (error) {
-          res.status(500).json({ error: error.message });
-        }
+    app.get("/api/my-sessions", verifyJWT, verifyTutor, async (req, res) => {
+      const { tutorEmail } = req.query;
+      try {
+        const sessions = await sessionCollections
+          .find({ tutorEmail })
+          .toArray();
+        res.json(sessions);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
       }
-    );
+    });
 
     // update session by tutor
     app.patch(
       "/api/sessions/:id/tutor",
-      verifyFirebaseToken,
+      verifyJWT,
       verifyTutor,
       async (req, res) => {
         try {
@@ -554,7 +567,7 @@ async function run() {
     // update rejected session status
     app.patch(
       "/api/sessions/resubmit/:sessionId",
-      verifyFirebaseToken,
+      verifyJWT,
       verifyTutor,
       async (req, res) => {
         try {
@@ -590,7 +603,7 @@ async function run() {
     // Get approved sessions for a tutor
     app.get(
       "/api/study-sessions/approved/tutor",
-      verifyFirebaseToken,
+      verifyJWT,
       verifyTutor,
       async (req, res) => {
         try {
@@ -611,7 +624,7 @@ async function run() {
     // POST: upload tutor materials by sessionId
     app.post(
       "/api/tutor-materials",
-      verifyFirebaseToken,
+      verifyJWT,
       verifyTutor,
       async (req, res) => {
         try {
@@ -661,7 +674,7 @@ async function run() {
     // GET: all materials create by a tutor
     app.get(
       "/api/tutor-materials",
-      verifyFirebaseToken,
+      verifyJWT,
       verifyTutor,
       async (req, res) => {
         try {
@@ -709,60 +722,55 @@ async function run() {
     });
 
     // create booking
-    app.post(
-      "/api/booking",
-      verifyFirebaseToken,
-      verifyStudent,
-      async (req, res) => {
-        try {
-          const {
-            sessionId,
-            studentEmail,
-            studentName,
-            tutorEmail,
-            tutorName,
-            registrationFee,
-            sessionTitle,
-            classStart,
-            classEnd,
-          } = req.body;
+    app.post("/api/booking", verifyJWT, verifyStudent, async (req, res) => {
+      try {
+        const {
+          sessionId,
+          studentEmail,
+          studentName,
+          tutorEmail,
+          tutorName,
+          registrationFee,
+          sessionTitle,
+          classStart,
+          classEnd,
+        } = req.body;
 
-          if (!sessionId || !studentEmail || !tutorEmail) {
-            return res.status(400).json({ message: "Required fields missing" });
-          }
-
-          const bookingData = {
-            sessionId: new ObjectId(sessionId),
-            studentEmail,
-            studentName,
-            tutorEmail,
-            tutorName,
-            bookingDate: new Date().toISOString(),
-            registrationFee,
-            sessionTitle,
-            classStart: new Date(classStart),
-            classEnd: new Date(classEnd),
-          };
-
-          const result = await bookedSessionsCollection.insertOne(bookingData);
-
-          if (!result) {
-            res.status(401).send({ message: "Booking not created" });
-          }
-          res.status(201).json({
-            message: "Booking created successfully",
-            insertedId: result.insertedId,
-          });
-        } catch (error) {
-          res.status(500).json({ message: "Error checking booking" });
+        if (!sessionId || !studentEmail || !tutorEmail) {
+          return res.status(400).json({ message: "Required fields missing" });
         }
+
+        const bookingData = {
+          sessionId: new ObjectId(sessionId),
+          studentEmail,
+          studentName,
+          tutorEmail,
+          tutorName,
+          bookingDate: new Date().toISOString(),
+          registrationFee,
+          sessionTitle,
+          classStart: new Date(classStart),
+          classEnd: new Date(classEnd),
+        };
+
+        const result = await bookedSessionsCollection.insertOne(bookingData);
+
+        if (!result) {
+          res.status(401).send({ message: "Booking not created" });
+        }
+        res.status(201).json({
+          message: "Booking created successfully",
+          insertedId: result.insertedId,
+        });
+      } catch (error) {
+        res.status(500).json({ message: "Error checking booking" });
       }
-    );
+    });
 
     // GET booked sessions by student
     app.get(
       "/api/booked-sessions",
-      verifyFirebaseToken,
+      verifyJWT,
       verifyStudent,
       async (req, res) => {
         try {
@@ -792,7 +800,7 @@ async function run() {
     // POST student notes
     app.post(
       "/api/student-notes",
-      verifyFirebaseToken,
+      verifyJWT,
       verifyStudent,
       async (req, res) => {
         try {
@@ -837,7 +845,7 @@ async function run() {
     // Get student's notes
     app.get(
       "/api/student-notes",
-      verifyFirebaseToken,
+      verifyJWT,
       verifyStudent,
       async (req, res) => {
         try {
@@ -865,7 +873,7 @@ async function run() {
     // update student's note
     app.patch(
       "/api/student-notes/:id",
-      verifyFirebaseToken,
+      verifyJWT,
       verifyStudent,
       async (req, res) => {
         try {
@@ -904,7 +912,7 @@ async function run() {
     // delete student's note
     app.delete(
       "/api/student-notes/:id",
-      verifyFirebaseToken,
+      verifyJWT,
       verifyStudent,
       async (req, res) => {
         try {
@@ -927,67 +935,57 @@ async function run() {
     );
 
     // GET materials by id
-    app.get(
-      "/api/materials",
-      verifyFirebaseToken,
-      verifyStudent,
-      async (req, res) => {
-        try {
-          const { sessionId } = req.query;
+    app.get("/api/materials", verifyJWT, verifyStudent, async (req, res) => {
+      try {
+        const { sessionId } = req.query;
 
-          if (!sessionId || !ObjectId.isValid(sessionId)) {
-            return res
-              .status(400)
-              .json({ message: "A valid sessionId is required." });
-          }
-
-          const materials = await sessionMaterialsCollection
-            .find({ sessionId })
-            .sort({ createdAt: -1 }) // optional: show latest materials first
-            .toArray();
-
-          res.status(200).json(materials);
-        } catch (error) {
-          console.error("Error fetching materials:", error);
-          res.status(500).json({ message: "Failed to fetch materials" });
+        if (!sessionId || !ObjectId.isValid(sessionId)) {
+          return res
+            .status(400)
+            .json({ message: "A valid sessionId is required." });
         }
+
+        const materials = await sessionMaterialsCollection
+          .find({ sessionId })
+          .sort({ createdAt: -1 }) // optional: show latest materials first
+          .toArray();
+
+        res.status(200).json(materials);
+      } catch (error) {
+        console.error("Error fetching materials:", error);
+        res.status(500).json({ message: "Failed to fetch materials" });
       }
-    );
+    });
 
     // // Get all users with search
-    app.get(
-      "/api/users",
-      verifyFirebaseToken,
-      verifyAdmin,
-      async (req, res) => {
-        try {
-          const { search } = req.query;
-          let query = {};
+    app.get("/api/users", verifyJWT, verifyAdmin, async (req, res) => {
+      try {
+        const { search } = req.query;
+        let query = {};
 
-          if (search) {
-            query = {
-              $or: [
-                // { name: { $regex: search, $options: "i" } },
-                { email: { $regex: search, $options: "i" } },
-              ],
-            };
-          }
-
-          const users = await usersCollection
-            .find(query)
-            .sort({ createdAt: -1 })
-            .toArray();
-          res.json(users);
-        } catch (error) {
-          res.status(500).json({ error: error.message });
+        if (search) {
+          query = {
+            $or: [
+              // { name: { $regex: search, $options: "i" } },
+              { email: { $regex: search, $options: "i" } },
+            ],
+          };
         }
+
+        const users = await usersCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.json(users);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
       }
-    );
+    });
 
     // Update user role
     app.patch(
       "/api/users/:userId/role",
-      verifyFirebaseToken,
+      verifyJWT,
       verifyAdmin,
       async (req, res) => {
         try {
@@ -1017,27 +1015,22 @@ async function run() {
     );
 
     // Get all sessions
-    app.get(
-      "/api/sessions",
-      verifyFirebaseToken,
-      verifyAdmin,
-      async (req, res) => {
-        try {
-          const sessions = await sessionCollections
-            .find()
-            .sort({ createdAt: -1 })
-            .toArray();
-          res.json(sessions);
-        } catch (error) {
-          res.status(500).json({ error: error.message });
-        }
+    app.get("/api/sessions", verifyJWT, verifyAdmin, async (req, res) => {
+      try {
+        const sessions = await sessionCollections
+          .find()
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.json(sessions);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
       }
-    );
+    });
 
     // Approve session
     app.patch(
       "/api/sessions/:sessionId/approve",
-      verifyFirebaseToken,
+      verifyJWT,
       verifyAdmin,
       async (req, res) => {
         try {
@@ -1069,7 +1062,7 @@ async function run() {
     // Reject session
     app.patch(
       "/api/sessions/:id/reject",
-      verifyFirebaseToken,
+      verifyJWT,
       verifyAdmin,
       async (req, res) => {
         console.log(req.body, req.params.id);
@@ -1111,65 +1104,60 @@ async function run() {
     );
 
     // update session
-    app.patch(
-      "/api/sessions/:id",
-      verifyFirebaseToken,
-      verifyAdmin,
-      async (req, res) => {
-        try {
-          const sessionId = req.params.id;
-          const {
-            title,
-            description,
-            maxStudents,
-            registrationStart,
-            registrationEnd,
-            classStart,
-            classEnd,
-            registrationFee,
-          } = req.body;
+    app.patch("/api/sessions/:id", verifyJWT, verifyAdmin, async (req, res) => {
+      try {
+        const sessionId = req.params.id;
+        const {
+          title,
+          description,
+          maxStudents,
+          registrationStart,
+          registrationEnd,
+          classStart,
+          classEnd,
+          registrationFee,
+        } = req.body;
 
-          if (!title || !description) {
-            return res
-              .status(400)
-              .json({ message: "Title and description are required." });
-          }
-
-          const updateResult = await sessionCollections.updateOne(
-            { _id: new ObjectId(sessionId) },
-            {
-              $set: {
-                title,
-                description,
-                maxStudents,
-                registrationStart,
-                registrationEnd,
-                classStart,
-                classEnd,
-                registrationFee: parseInt(registrationFee) || 0,
-                updatedAt: new Date().toISOString(),
-              },
-            }
-          );
-
-          if (updateResult.matchedCount === 0) {
-            return res.status(404).json({ message: "Session not found." });
-          }
-
-          res.json({ message: "Session updated successfully." });
-        } catch (error) {
-          console.error("Update session error:", error);
-          res
-            .status(500)
-            .json({ message: "Internal server error", error: error.message });
+        if (!title || !description) {
+          return res
+            .status(400)
+            .json({ message: "Title and description are required." });
         }
+
+        const updateResult = await sessionCollections.updateOne(
+          { _id: new ObjectId(sessionId) },
+          {
+            $set: {
+              title,
+              description,
+              maxStudents,
+              registrationStart,
+              registrationEnd,
+              classStart,
+              classEnd,
+              registrationFee: parseInt(registrationFee) || 0,
+              updatedAt: new Date().toISOString(),
+            },
+          }
+        );
+
+        if (updateResult.matchedCount === 0) {
+          return res.status(404).json({ message: "Session not found." });
+        }
+
+        res.json({ message: "Session updated successfully." });
+      } catch (error) {
+        console.error("Update session error:", error);
+        res
+          .status(500)
+          .json({ message: "Internal server error", error: error.message });
       }
-    );
+    });
 
     // Delete session
     app.delete(
       "/api/sessions/:sessionId",
-      verifyFirebaseToken,
+      verifyJWT,
       verifyAdmin,
       async (req, res) => {
         try {
@@ -1193,35 +1181,30 @@ async function run() {
     );
 
     // Get all materials with pagination
-    app.get(
-      "/api/materials/all",
-      verifyFirebaseToken,
-      verifyAdmin,
-      async (req, res) => {
-        try {
-          const page = parseInt(req.query.page) || 1;
-          const limit = parseInt(req.query.limit) || 10;
+    app.get("/api/materials/all", verifyJWT, verifyAdmin, async (req, res) => {
+      try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
 
-          const materials = await sessionMaterialsCollection
-            .find()
-            .sort({ createdAt: -1 })
-            .skip((page - 1) * limit)
-            .limit(limit)
-            .toArray();
+        const materials = await sessionMaterialsCollection
+          .find()
+          .sort({ createdAt: -1 })
+          .skip((page - 1) * limit)
+          .limit(limit)
+          .toArray();
 
-          const total = await sessionMaterialsCollection.countDocuments();
+        const total = await sessionMaterialsCollection.countDocuments();
 
-          res.json({ total, materials });
-        } catch (error) {
-          res.status(500).json({ error: error.message });
-        }
+        res.json({ total, materials });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
       }
-    );
+    });
 
     // Delete material
     app.delete(
       "/api/materials/:id",
-      verifyFirebaseToken,
+      verifyJWT,
       verifyAdmin,
       async (req, res) => {
         try {
