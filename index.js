@@ -1248,6 +1248,84 @@ async function run() {
       }
     );
 
+    // Delete material by tutor
+    app.delete(
+      "/api/tutor-materials/:id",
+      verifyJWT,
+      verifyTutor,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+
+          const material = await sessionMaterialsCollection.findOne({
+            _id: new ObjectId(id),
+          });
+
+          if (!material?.tutorEmail === req?.user?.email) {
+            return res.status(403).send({ message: "Tutor not match" });
+          }
+
+          if (!ObjectId.isValid(id)) {
+            return res.status(400).json({ error: "Invalid material ID" });
+          }
+
+          const result = await sessionMaterialsCollection.deleteOne({
+            _id: new ObjectId(id),
+          });
+
+          if (result.deletedCount === 0) {
+            return res.status(404).json({ error: "Material not found" });
+          }
+
+          res.status(200).json({ message: "Material deleted successfully" });
+        } catch (error) {
+          console.error("Delete error:", error);
+          res
+            .status(500)
+            .json({ error: "Server error. Please try again later." });
+        }
+      }
+    );
+
+    // update material by tutor
+    app.patch(
+      "/api/tutor-materials/:id",
+      verifyJWT,
+      verifyTutor,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const { title, driveLink } = req.body;
+
+          const material = await sessionMaterialsCollection.findOne({
+            _id: new ObjectId(id),
+          });
+
+          if (!material?.tutorEmail === req?.user?.email) {
+            return res.status(403).send({ message: "Tutor not match" });
+          }
+
+          const update = sessionMaterialsCollection.findOneAndUpdate(
+            {
+              _id: new ObjectId(id),
+            },
+            { $set: { title, driveLink } }
+          );
+
+          if (update.modifiedCount === 0) {
+            return res.status(400).send({ message: "Material not updated" });
+          }
+
+          res.status(200).send({ message: "Material updated successfully" });
+        } catch (error) {
+          console.error("Delete error:", error);
+          res
+            .status(500)
+            .json({ error: "Server error. Please try again later." });
+        }
+      }
+    );
+
     // await client.db("admin").command({ ping: 1 });
     // console.log("connected to mongodb");
   } catch (error) {
