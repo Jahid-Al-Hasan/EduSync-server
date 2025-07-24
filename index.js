@@ -13,7 +13,7 @@ const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 // middlewares
 app.use(
   cors({
-    origin: ["http://localhost:5173"],
+    origin: ["https://edusync-bce10.web.app"],
     credentials: true,
   })
 );
