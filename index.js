@@ -451,36 +451,6 @@ async function run() {
       }
     });
 
-    // Helper function to update session's average rating
-    // async function updateSessionAverageRating(sessionId) {
-    //   try {
-    //     const reviews = await db
-    //       .collection("reviews")
-    //       .find({ sessionId })
-    //       .toArray();
-
-    //     if (reviews.length > 0) {
-    //       const totalRating = reviews.reduce(
-    //         (sum, review) => sum + review.rating,
-    //         0
-    //       );
-    //       const averageRating = totalRating / reviews.length;
-
-    //       await sessionCollections.updateOne(
-    //         { _id: new ObjectId(sessionId) },
-    //         {
-    //           $set: {
-    //             averageRating: parseFloat(averageRating.toFixed(1)),
-    //             reviewCount: reviews.length,
-    //           },
-    //         }
-    //       );
-    //     }
-    //   } catch (error) {
-    //     console.error("Failed to update session rating:", error);
-    //   }
-    // }
-
     // session details
     app.get("/api/sessions/:sessionId", async (req, res) => {
       try {
@@ -1083,7 +1053,6 @@ async function run() {
       verifyJWT,
       verifyAdmin,
       async (req, res) => {
-        console.log(req.body, req.params.id);
         const { id } = req.params;
         const { rejectionReason, rejectionFeedback } = req.body;
 
@@ -1437,3 +1406,5 @@ if (process.env.NODE_ENV !== "production") {
     console.log(`Server is running locally on port ${port}`);
   });
 }
+
+module.exports = app;
