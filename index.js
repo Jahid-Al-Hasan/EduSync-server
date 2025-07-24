@@ -243,7 +243,7 @@ async function run() {
       }
     });
 
-    // find user by email
+    // find user role by email
     app.get("/api/user", verifyJWT, async (req, res) => {
       try {
         const email = req.user?.email;
@@ -265,6 +265,22 @@ async function run() {
         return res.status(200).json({
           exists: false,
         });
+      } catch (error) {
+        console.error("Failed to fetch user:", error.message);
+        return res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // all tutors
+    app.get("/api/users/tutors", async (req, res) => {
+      try {
+        const tutors = await usersCollection.find({ role: "tutor" }).toArray();
+
+        if (!tutors) {
+          return res.status(401).send({ message: "Tutor not found" });
+        }
+
+        return res.status(200).send(tutors);
       } catch (error) {
         console.error("Failed to fetch user:", error.message);
         return res.status(500).json({ message: "Internal server error" });
