@@ -7,6 +7,8 @@ const port = process.env.PORT || 3001;
 const cors = require("cors");
 const { MongoClient, ServerApiVersion } = require("mongodb");
 const { ObjectId } = require("mongodb");
+const Stripe = require("stripe");
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 // middlewares
 app.use(
@@ -982,7 +984,7 @@ async function run() {
         if (search) {
           query = {
             $or: [
-              // { name: { $regex: search, $options: "i" } },
+              { name: { $regex: search, $options: "i" } },
               { email: { $regex: search, $options: "i" } },
             ],
           };
@@ -1322,6 +1324,95 @@ async function run() {
           res
             .status(500)
             .json({ error: "Server error. Please try again later." });
+        }
+      }
+    );
+
+    // stripe payment intent
+    app.post(
+      "/api/payments/create-payment-intent",
+      verifyJWT,
+      verifyStudent,
+      async (req, res) => {
+        const { registrationFee, currency = "usd" } = req.body;
+
+        // ✅ Basic validation
+        if (!registrationFee || isNaN(registrationFee)) {
+          return res.status(400).json({ error: "Invalid or missing amount." });
+        }
+
+        try {
+          // ✅ Create the PaymentIntent
+          const paymentIntent = await stripe.paymentIntents.create({
+            amount: Math.round(registrationFee),
+            currency,
+            payment_method_types: ["card"],
+          });
+
+          // ✅ Return the client secret
+          res.status(200).json({
+            clientSecret: paymentIntent.client_secret,
+          });
+        } catch (err) {
+          console.error("Payment intent creation failed:", err.message);
+          res.status(500).json({ error: "Payment intent creation failed." });
+        }
+      }
+    );
+
+    app.post(
+      "/api/paid-sessions/booking",
+      verifyJWT,
+      verifyStudent,
+      async (req, res) => {
+        try {
+          const {
+            paymentIntentId,
+            sessionId,
+            studentEmail,
+            studentName,
+            tutorEmail,
+            tutorName,
+            registrationFee,
+            sessionTitle,
+            classStart,
+            classEnd,
+          } = req.body;
+
+          // Optional: verify paymentIntent status with Stripe
+          const paymentIntent = await stripe.paymentIntents.retrieve(
+            paymentIntentId
+          );
+          if (paymentIntent.status !== "succeeded") {
+            return res.status(400).json({ error: "Payment not successful." });
+          }
+
+          // Save booking
+          const bookingData = {
+            sessionId: new ObjectId(sessionId),
+            paymentIntentId,
+            studentEmail,
+            studentName,
+            tutorEmail,
+            tutorName,
+            bookingDate: new Date().toISOString(),
+            registrationFee,
+            sessionTitle,
+            classStart: new Date(classStart),
+            classEnd: new Date(classEnd),
+          };
+
+          const result = await bookedSessionsCollection.insertOne(bookingData);
+
+          if (!result) {
+            res.status(401).send({ message: "Booking not created" });
+          }
+          res.status(201).json({
+            message: "Booking created successfully",
+            insertedId: result.insertedId,
+          });
+        } catch (error) {
+          res.status(500).json({ message: "Error checking booking" });
         }
       }
     );
