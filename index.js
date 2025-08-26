@@ -1432,6 +1432,65 @@ async function run() {
       }
     );
 
+    // admin dashboard stats
+    app.get("/api/overview-stats", verifyJWT, verifyAdmin, async (req, res) => {
+      try {
+        const totalUsers = await usersCollection.countDocuments();
+        const totalStudents = await usersCollection.countDocuments({
+          role: "student",
+        });
+        const totalTutors = await usersCollection.countDocuments({
+          role: "tutor",
+        });
+
+        const totalSessions = await sessionCollections.countDocuments();
+        const approvedSessions = await sessionCollections.countDocuments({
+          status: "approved",
+        });
+        const pendingSessions = await sessionCollections.countDocuments({
+          status: "pending",
+        });
+        const rejectedSessions = await sessionCollections.countDocuments({
+          status: "rejected",
+        });
+
+        const totalBookings = await bookedSessionsCollection.countDocuments();
+        const totalReviews = await reviewsCollection.countDocuments();
+
+        // Revenue calculation (sum of registrationFee from booked sessions)
+        const revenue = await bookedSessionsCollection
+          .aggregate([
+            {
+              $group: {
+                _id: null,
+                totalRevenue: { $sum: "$registrationFee" },
+              },
+            },
+          ])
+          .toArray();
+
+        res.json({
+          users: {
+            total: totalUsers,
+            students: totalStudents,
+            tutors: totalTutors,
+          },
+          sessions: {
+            total: totalSessions,
+            approved: approvedSessions,
+            pending: pendingSessions,
+            rejected: rejectedSessions,
+          },
+          bookings: totalBookings,
+          reviews: totalReviews,
+          revenue: revenue[0]?.totalRevenue || 0,
+        });
+      } catch (error) {
+        console.error("Error fetching overview stats:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
     // await client.db("admin").command({ ping: 1 });
     // console.log("connected to mongodb");
   } catch (error) {
