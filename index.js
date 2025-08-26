@@ -1491,6 +1491,61 @@ async function run() {
       }
     });
 
+    // Tutor Dashboard stats
+    app.get("/api/tutor-stats", verifyJWT, verifyTutor, async (req, res) => {
+      try {
+        const tutorEmail = req.user.email;
+
+        // total sessions created by tutor
+        const totalSessions = await sessionCollections.countDocuments({
+          tutorEmail,
+        });
+
+        // total approved sessions created by tutor
+        const approvedSessions = await sessionCollections.countDocuments({
+          tutorEmail,
+          status: "approved",
+        });
+
+        // total unique students who booked sessions with this tutor
+        const studentsAgg = await bookedSessionsCollection
+          .aggregate([
+            { $match: { tutorEmail } },
+            { $group: { _id: "$studentEmail" } },
+            { $count: "totalStudents" },
+          ])
+          .toArray();
+        const totalStudents = studentsAgg[0]?.totalStudents || 0;
+
+        // total bookings for this tutor
+        const totalBookings = await bookedSessionsCollection.countDocuments({
+          tutorEmail,
+        });
+
+        // total earnings
+        const earningsAgg = await bookedSessionsCollection
+          .aggregate([
+            { $match: { tutorEmail } },
+            { $group: { _id: null, total: { $sum: "$registrationFee" } } },
+          ])
+          .toArray();
+        const totalEarnings = earningsAgg[0]?.total || 0;
+
+        res.send({
+          sessions: {
+            total: totalSessions,
+            approved: approvedSessions,
+          },
+          students: totalStudents,
+          bookings: totalBookings,
+          earnings: totalEarnings,
+        });
+      } catch (error) {
+        console.error("Tutor stats error:", error);
+        res.status(500).send({ message: "Failed to load tutor stats" });
+      }
+    });
+
     // await client.db("admin").command({ ping: 1 });
     // console.log("connected to mongodb");
   } catch (error) {
