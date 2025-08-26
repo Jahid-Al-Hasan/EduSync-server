@@ -13,7 +13,7 @@ const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 // middlewares
 app.use(
   cors({
-    origin: ["https://edusync-bce10.web.app"],
+    origin: ["http://localhost:5173", "https://edusync-bce10.web.app"],
     credentials: true,
   })
 );
@@ -245,6 +245,49 @@ async function run() {
       }
     });
 
+    // update user
+    app.patch("/api/user/update/:email", verifyJWT, async (req, res) => {
+      try {
+        const { email } = req.params;
+        const { name, photoURL, phoneNumber, address, bio } = req.body;
+
+        // verify user identity
+        if (email !== req.user.email) {
+          return res
+            .status(403)
+            .json({ message: "Email is not verified by Firebase" });
+        }
+
+        const userExists = await usersCollection.findOne({ email });
+        if (!userExists) {
+          return res.status(404).json({ message: "User does not exist" });
+        }
+
+        const updatedData = {
+          name,
+          photoURL,
+          phoneNumber,
+          address,
+          bio,
+          updatedAt: new Date().toISOString(),
+        };
+
+        const result = await usersCollection.updateOne(
+          { email },
+          { $set: updatedData }
+        );
+
+        if (result.modifiedCount === 0) {
+          return res.status(400).json({ message: "Nothing was updated" });
+        }
+
+        res.status(200).json({ message: "User updated successfully" });
+      } catch (error) {
+        console.error(error.message);
+        res.status(500).json({ message: "Server error" });
+      }
+    });
+
     // find user role by email
     app.get("/api/user", verifyJWT, async (req, res) => {
       try {
@@ -261,6 +304,9 @@ async function run() {
           return res.status(200).json({
             exists: true,
             role: user.role || "unknown",
+            phoneNumber: user.phoneNumber || "",
+            address: user.address || "",
+            bio: user.bio || "",
           });
         }
 
