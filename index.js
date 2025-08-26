@@ -13,7 +13,7 @@ const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 // middlewares
 app.use(
   cors({
-    origin: ["http://localhost:5173", "https://edusync-bce10.web.app"],
+    origin: ["https://edusync-bce10.web.app"],
     credentials: true,
   })
 );
@@ -1545,6 +1545,86 @@ async function run() {
         res.status(500).send({ message: "Failed to load tutor stats" });
       }
     });
+
+    // Student Dashboard stats
+    app.get(
+      "/api/student-stats",
+      verifyJWT,
+      verifyStudent,
+      async (req, res) => {
+        try {
+          const studentEmail = req.user.email;
+
+          // Total sessions booked by student
+          const totalBookings = await bookedSessionsCollection.countDocuments({
+            studentEmail,
+          });
+
+          // Upcoming sessions (sessions where classStart is in the future)
+          const upcomingSessions =
+            await bookedSessionsCollection.countDocuments({
+              studentEmail,
+              classStart: { $gt: new Date() },
+            });
+
+          // Completed sessions (sessions where classEnd is in the past)
+          const completedSessions =
+            await bookedSessionsCollection.countDocuments({
+              studentEmail,
+              classEnd: { $lt: new Date() },
+            });
+
+          // Total amount spent
+          const spendingAgg = await bookedSessionsCollection
+            .aggregate([
+              { $match: { studentEmail } },
+              { $group: { _id: null, total: { $sum: "$registrationFee" } } },
+            ])
+            .toArray();
+          const totalSpent = spendingAgg[0]?.total || 0;
+
+          // Favorite tutor (tutor with most bookings)
+          const favoriteTutorAgg = await bookedSessionsCollection
+            .aggregate([
+              { $match: { studentEmail } },
+              { $group: { _id: "$tutorEmail", count: { $sum: 1 } } },
+              { $sort: { count: -1 } },
+              { $limit: 1 },
+            ])
+            .toArray();
+
+          let favoriteTutor = "None";
+          if (favoriteTutorAgg.length > 0) {
+            const tutor = await usersCollection.findOne(
+              { email: favoriteTutorAgg[0]._id },
+              { projection: { name: 1 } }
+            );
+            favoriteTutor = tutor?.name || favoriteTutorAgg[0]._id;
+          }
+
+          // Recent bookings (last 5)
+          const recentBookings = await bookedSessionsCollection
+            .find({ studentEmail })
+            .sort({ bookingDate: -1 })
+            .limit(5)
+            .toArray();
+
+          res.send({
+            bookings: {
+              total: totalBookings,
+              upcoming: upcomingSessions,
+              completed: completedSessions,
+            },
+            spending: totalSpent,
+            favoriteTutor,
+            recentBookings,
+          });
+        } catch (error) {
+          console.error("Student stats error:", error);
+          res.status(500).send({ message: "Failed to load student stats" });
+        }
+      }
+    );
 
     // await client.db("admin").command({ ping: 1 });
     // console.log("connected to mongodb");
